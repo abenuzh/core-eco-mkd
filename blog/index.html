@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Блог — CORE.ECO · МКД</title>
+<meta name="description" content="Статьи о «зелёных» многоквартирных домах и зелёных облигациях: стандарты, технологии, рынок финансирования.">
+<link rel="icon" href="../assets/img/mark.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../assets/css/style.css">
+</head>
+<body data-root="../">
+
+<header class="site-header">
+  <div class="wrap">
+    <a href="../index.html" class="brand">
+      <img src="../assets/img/mark.svg" class="mark" alt="CORE.ECO">
+      <span class="word">CORE<b>.ECO</b></span>
+      <span class="tag">МКД</span>
+    </a>
+    <nav class="nav-links" id="navLinks">
+      <a href="../index.html">Главная</a>
+      <a href="../index.html#standard">ГОСТ 35329—2026</a>
+      <a href="../index.html#process">Как проходит оценка</a>
+      <a href="index.html" class="current">Блог</a>
+      <a href="../assessment.html" class="nav-cta">Пройти оценку →</a>
+    </nav>
+    <button class="nav-toggle" id="navToggle" aria-label="Меню">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M3 12h18M3 18h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
+  </div>
+</header>
+
+<section class="blog-hero">
+  <div class="wrap">
+    <div class="eyebrow reveal">Блог CORE.ECO</div>
+    <h1 class="h-lg reveal">«Зелёные» дома и «зелёные» облигации</h1>
+    <p class="lede reveal reveal-delay-1" style="margin-top:16px;">Разбираем стандарты, технологии и механизмы финансирования устойчивого строительства в России — от ГОСТ 35329-2026 до рынка зелёных облигаций.</p>
+    <div class="blog-filter reveal reveal-delay-2" id="blogFilter">
+      <button data-tag="all" class="on">Все статьи</button>
+      <button data-tag="МКД">«Зелёные» МКД</button>
+      <button data-tag="Облигации">Зелёные облигации</button>
+    </div>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="blog-grid" id="blogGrid"></div>
+  </div>
+</section>
+
+<section class="section-tight">
+  <div class="wrap">
+    <div class="cta-band reveal">
+      <div>
+        <h3>Разбираетесь в стандарте — время проверить свой проект</h3>
+        <p>Пройдите предварительную оценку по 58 критериям ГОСТ 35329—2026 и узнайте свой рейтинг за 20 минут.</p>
+      </div>
+      <a href="../assessment.html" class="btn btn-dark">Начать оценку →</a>
+    </div>
+  </div>
+</section>
+
+<div id="footer-placeholder"></div>
+
+<script src="../assets/js/main.js"></script>
+<script src="../assets/js/blog-data.js"></script>
+<script>
+(function(){
+  var grid = document.getElementById('blogGrid');
+  function iconFor(tag){
+    return tag === 'Облигации'
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 17V9l8-5 8 5v8"/><path d="M9 21v-6h6v6"/><path d="M4 21h16"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 3c4 3 6 6 6 10a6 6 0 01-12 0c0-4 2-7 6-10z"/></svg>';
+  }
+  function fmtDate(d){ var p=d.split('-'); var m=['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']; return p[2]+' '+m[parseInt(p[1],10)-1]+' '+p[0]; }
+  function draw(filter){
+    var list = BLOG_POSTS.filter(function(p){ return filter==='all' || p.tag===filter; });
+    grid.innerHTML = list.map(function(p){
+      return '<a href="'+p.slug+'.html" class="blog-card reveal in">'
+        + '<div class="thumb">' + iconFor(p.tag) + '<span class="tag">'+p.tag+'</span></div>'
+        + '<div class="body"><div class="meta">'+fmtDate(p.date)+' · '+p.read+'</div><h3>'+p.title+'</h3><p>'+p.excerpt+'</p><div class="read-more">Читать →</div></div>'
+        + '</a>';
+    }).join('');
+  }
+  draw('all');
+  document.getElementById('blogFilter').addEventListener('click', function(e){
+    var btn = e.target.closest('button'); if(!btn) return;
+    this.querySelectorAll('button').forEach(function(b){b.classList.remove('on');});
+    btn.classList.add('on');
+    draw(btn.getAttribute('data-tag'));
+  });
+})();
+</script>
+<script src="../assets/js/footer.js"></script>
+<script src="../assets/js/feedback.js"></script>
+</body>
+</html>
