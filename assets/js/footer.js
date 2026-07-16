@@ -3,6 +3,7 @@
 (function () {
   'use strict';
   var root = document.body.getAttribute('data-root') || '';
+  var FORM_ENDPOINT = (window.CORE_ECO_CONFIG && window.CORE_ECO_CONFIG.CONTACT_ENDPOINT) || 'https://formspree.io/f/YOUR_FORM_ID';
   var html = ''
     + '<section class="site-footer blueprint-bg on-dark">'
     + '  <div class="wrap">'
@@ -32,10 +33,14 @@
     + '      </div>'
     + '      <div>'
     + '        <h4>Оставить заявку</h4>'
-    + '        <form class="footer-form" data-endpoint="https://formspree.io/f/YOUR_FORM_ID">'
-    + '          <input class="field" style="margin-bottom:10px;color:var(--ink-900);background:#fff" name="name" placeholder="Ваше имя" required>'
-    + '          <input class="field" style="margin-bottom:10px;color:var(--ink-900);background:#fff" name="email" type="email" placeholder="E-mail" required>'
-    + '          <textarea class="field" style="margin-bottom:10px;color:var(--ink-900);background:#fff;min-height:70px" name="message" placeholder="Ваш запрос"></textarea>'
+    + '        <p style="font-size:12.5px;color:var(--paper-300);margin-bottom:14px;line-height:1.55;">Оставьте контакты и вопрос — эксперт CORE.ECO ответит на e-mail в течение 1–2 рабочих дней.</p>'
+    + '        <form class="footer-form" data-endpoint="' + FORM_ENDPOINT + '">'
+    + '          <label style="display:block;font-size:11px;color:var(--paper-300);margin-bottom:4px;">Имя</label>'
+    + '          <input class="field" style="margin-bottom:10px;color:var(--ink-900);background:#fff" name="name" placeholder="Как к вам обращаться" required>'
+    + '          <label style="display:block;font-size:11px;color:var(--paper-300);margin-bottom:4px;">E-mail</label>'
+    + '          <input class="field" style="margin-bottom:10px;color:var(--ink-900);background:#fff" name="email" type="email" placeholder="Куда прислать ответ" required>'
+    + '          <label style="display:block;font-size:11px;color:var(--paper-300);margin-bottom:4px;">Ваш запрос</label>'
+    + '          <textarea class="field" style="margin-bottom:10px;color:var(--ink-900);background:#fff;min-height:70px" name="message" placeholder="Например: интересует сертификация дома на этапе проекта"></textarea>'
     + '          <label style="display:flex;gap:8px;font-size:11.5px;margin-bottom:12px;align-items:flex-start;">'
     + '            <input type="checkbox" required style="margin-top:3px">'
     + '            <span>Согласен на обработку персональных данных</span>'

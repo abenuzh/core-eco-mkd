@@ -4,7 +4,12 @@
 (function () {
   'use strict';
 
-  var FORM_ENDPOINT = 'https://formspree.io/f/YOUR_FORM_ID'; // TODO: заменить на реальный ID формы Formspree перед запуском в продакшн
+  var FORM_ENDPOINT = (window.CORE_ECO_CONFIG && window.CORE_ECO_CONFIG.LEAD_ENDPOINT) || 'https://formspree.io/f/YOUR_FORM_ID';
+
+  var ALLOWED_EXT = ['pdf', 'jpg', 'jpeg', 'png', 'doc', 'docx', 'xls', 'xlsx'];
+  var MAX_FILE_MB = 20;
+  var MAX_FILES_PER_CRITERION = 5;
+  var uploadErrors = {}; // code -> текст ошибки валидации файла (переживает render(), т.к. хранится вне STATE)
 
   var STATE = {
     step: 0, // 0 = стадия, 1..10 = категории, 11 = результат
@@ -18,6 +23,17 @@
   function ans(code) {
     if (!STATE.answers[code]) STATE.answers[code] = { satisfied: undefined, bonus: false, files: [] };
     return STATE.answers[code];
+  }
+
+  // ---------------------------------------------------------------- переход сразу к нужной категории (клик по карточке на главной)
+  function getCatParam() {
+    var m = /[?&]cat=(\d+)/.exec(location.search);
+    var n = m && parseInt(m[1], 10);
+    return (n >= 1 && n <= 10) ? n : null;
+  }
+  var pendingCategory = getCatParam();
+  if (pendingCategory && window.history && window.history.replaceState) {
+    window.history.replaceState(null, '', location.pathname);
   }
 
   // ---------------------------------------------------------------- автосохранение прогресса в этом браузере
@@ -135,13 +151,17 @@
   }
 
   // ---------------------------------------------------------------- рендер степпера
+  // На десктопе 12 шагов (стадия + 10 категорий + результат) не помещались в контейнер и обрезались
+  // после ~9-го шага без намёка на прокрутку (правка №10). Решение: у шагов-категорий убран
+  // повторяющий номер текст (он и так есть в самом кружке и в заголовке категории), плюс активный
+  // шаг всегда докручивается в видимую область, плюс страховка — растушёванные края при переполнении.
   function renderStepper() {
     var el = document.getElementById('stepper');
     if (!el) return;
     var html = '<div class="assess-step ' + (STATE.step === 0 ? 'active' : STATE.step > 0 ? 'done' : '') + '" data-go="0"><span class="dot">S</span>Стадия</div>';
     for (var i = 1; i <= 10; i++) {
       html += '<div class="assess-connector"></div>';
-      html += '<div class="assess-step ' + (STATE.step === i ? 'active' : STATE.step > i ? 'done' : '') + '" data-go="' + i + '"><span class="dot">' + i + '</span>Кат. ' + i + '</div>';
+      html += '<div class="assess-step ' + (STATE.step === i ? 'active' : STATE.step > i ? 'done' : '') + '" data-go="' + i + '" title="Категория ' + i + '"><span class="dot">' + i + '</span></div>';
     }
     html += '<div class="assess-connector"></div>';
     html += '<div class="assess-step ' + (STATE.step === 11 ? 'active' : '') + '" data-go="11"><span class="dot">✓</span>Результат</div>';
@@ -152,6 +172,8 @@
         if (target <= maxReachableStep()) { STATE.step = target; render(); }
       });
     });
+    var activeEl = el.querySelector('.assess-step.active');
+    if (activeEl && activeEl.scrollIntoView) activeEl.scrollIntoView({ block: 'nearest', inline: 'center' });
   }
 
   function maxReachableStep() {
@@ -189,7 +211,7 @@
       });
     });
     var nextBtn = document.getElementById('stageNext');
-    if (nextBtn) nextBtn.addEventListener('click', function () { STATE.step = 1; render(); });
+    if (nextBtn) nextBtn.addEventListener('click', function () { STATE.step = pendingCategory || 1; pendingCategory = null; render(); });
   }
 
   function iconDoc() { return '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z" stroke="currentColor" stroke-width="1.6"/><path d="M14 3v5h5" stroke="currentColor" stroke-width="1.6"/></svg>'; }
@@ -209,7 +231,8 @@
     if (cat.id === 1) {
       html += '<div class="geo-box">'
         + '<label>Адрес дома (для автоматической проверки критериев 1.1–1.8 по OpenStreetMap)</label>'
-        + '<div class="geo-row"><input class="field" id="geoAddress" placeholder="Город, улица, номер дома" value="' + (STATE.address || '') + '"><button class="btn btn-primary btn-sm" id="geoGo" style="flex-shrink:0">Определить координаты</button></div>'
+        + '<div class="geo-row"><input class="field" id="geoAddress" placeholder="Например: Москва, ул. Тверская, д. 1" value="' + (STATE.address || '') + '"><button class="btn btn-primary btn-sm" id="geoGo" style="flex-shrink:0">Определить координаты</button></div>'
+        + '<div class="geo-hint">Формат: город, улица, номер дома — через запятую, без «г.», «ул.» обязательно писать не нужно. Чем точнее адрес, тем надёжнее автопроверка.</div>'
         + '<div class="geo-status" id="geoStatusEl">' + (STATE.geoStatus || 'Проверка — предварительная, по открытым данным OSM. Не заменяет официальную проверку по ЕИСЖС/ГИС.') + '</div>'
         + '</div>';
     }
@@ -251,24 +274,32 @@
     if (cr.verificationText) {
       html += '<div class="criterion-verify"><b>Как подтверждается:</b> ' + escapeHtml(cr.verificationText) + '</div>';
     }
+    var notSatisfied = a.satisfied === false;
     html += '<div class="criterion-answer">'
       + '  <button class="opt-btn ' + (a.satisfied === true ? 'on' : '') + '" data-ans="' + cr.code + '" data-val="yes">✓ Выполнено</button>'
       + '  <button class="opt-btn ' + (a.satisfied === false ? 'off-x' : '') + '" data-ans="' + cr.code + '" data-val="no">✕ Не выполнено</button>';
     if (cr.bonusPoints) {
-      html += '<label class="opt-btn" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;">'
-        + '<input type="checkbox" data-bonus="' + cr.code + '" ' + (a.bonus ? 'checked' : '') + ' style="margin:0"> + доп. балл (' + cr.bonusPoints + ')</label>';
+      html += '<label class="opt-btn ' + (notSatisfied ? 'disabled' : '') + '" style="display:inline-flex;align-items:center;gap:6px;cursor:' + (notSatisfied ? 'not-allowed' : 'pointer') + ';">'
+        + '<input type="checkbox" data-bonus="' + cr.code + '" ' + (a.bonus ? 'checked' : '') + (notSatisfied ? ' disabled' : '') + ' style="margin:0"> + доп. балл (' + cr.bonusPoints + ')</label>';
     }
     html += '</div>';
+
+    if (notSatisfied) {
+      html += '<div class="criterion-blocked-note">Критерий отмечен как «Не выполнено» — загрузка файлов и доп. баллы недоступны, пока вы не измените статус выше.</div>';
+    }
 
     if (geoRuleKeys.length) {
       html += '<div class="geo-check-row"><button class="btn btn-outline-dark btn-sm" data-geocheck="' + cr.code + '">Проверить по адресу (OSM)</button><span class="result" id="georesult-' + cr.code + '">' + geoResultLabel(cr.code) + '</span></div>';
     }
 
-    html += '<div class="upload-zone" data-drop="' + cr.code + '">'
+    html += '<div class="upload-zone' + (notSatisfied ? ' zone-disabled' : '') + '" data-drop="' + cr.code + '">'
       + '  <div class="upload-icon">' + iconUpload() + '</div>'
-      + '  <div class="upload-text"><b>Загрузите файл</b> или перетащите сюда — подтверждающий документ по этому критерию</div>'
-      + '  <input type="file" multiple id="file-' + cr.code + '">'
+      + '  <div class="upload-text"><b>Загрузите файл</b> или перетащите сюда — подтверждающий документ по этому критерию'
+      + '    <div class="upload-limits">PDF, JPG, PNG, DOC(X), XLS(X) · до ' + MAX_FILE_MB + ' МБ на файл · не более ' + MAX_FILES_PER_CRITERION + ' файлов</div>'
+      + '  </div>'
+      + '  <input type="file" multiple id="file-' + cr.code + '" accept="' + ALLOWED_EXT.map(function (e) { return '.' + e; }).join(',') + '" ' + (notSatisfied ? 'disabled' : '') + '>'
       + '</div>'
+      + '<div class="upload-err" id="err-' + cr.code + '">' + escapeHtml(uploadErrors[cr.code] || '') + '</div>'
       + '<div id="files-' + cr.code + '">' + filesChipsHtml(cr.code) + '</div>';
 
     html += '</div>';
@@ -299,13 +330,24 @@
     return a.geo.summary;
   }
 
+  // приводим адрес к единому шаблону перед геокодированием: убираем лишние пробелы,
+  // нормализуем запятые и добавляем страну, если она не указана — так Nominatim точнее находит объект.
+  function normalizeAddress(address) {
+    var a = address.replace(/\s+/g, ' ').trim();
+    a = a.replace(/\s*,\s*/g, ', ').replace(/,+/g, ',').replace(/,\s*$/, '');
+    if (!/росси/i.test(a)) a += ', Россия';
+    return a;
+  }
+
   function wireCategoryEvents(main, cat) {
     var addrInput = document.getElementById('geoAddress');
     var geoGo = document.getElementById('geoGo');
     if (geoGo) {
       geoGo.addEventListener('click', function () {
-        var address = addrInput.value.trim();
-        if (!address) return;
+        var raw = addrInput.value.trim();
+        if (!raw) return;
+        var address = normalizeAddress(raw);
+        addrInput.value = address;
         STATE.address = address;
         var statusEl = document.getElementById('geoStatusEl');
         statusEl.textContent = 'Определяем координаты…';
@@ -313,8 +355,13 @@
         CoreEcoOSM.geocodeAddress(address).then(function (geo) {
           STATE.geo = geo;
           statusEl.textContent = 'Координаты найдены: ' + geo.label;
-        }).catch(function () {
-          statusEl.textContent = 'Не удалось определить адрес автоматически — заполните критерии вручную по ЕИСЖС/ГИС.';
+          statusEl.className = 'geo-status';
+        }).catch(function (err) {
+          if (err && err.message === 'not-found') {
+            statusEl.textContent = 'Адрес не найден в OpenStreetMap. Проверьте написание (город, улица, номер дома) или заполните критерии вручную по ЕИСЖС/ГИС.';
+          } else {
+            statusEl.textContent = 'Сервис геокодирования временно недоступен. Попробуйте ещё раз через минуту или заполните критерии вручную по ЕИСЖС/ГИС.';
+          }
           statusEl.className = 'geo-status err';
         });
       });
@@ -341,7 +388,7 @@
             renderCurrent();
           })
           .catch(function () {
-            resultEl.textContent = 'сервис OSM недоступен, отметьте вручную';
+            resultEl.textContent = 'сервис OSM сейчас недоступен (попробовали основной и резервный сервер) — отметьте критерий вручную по ЕИСЖС/ГИС';
           });
       });
     });
@@ -367,15 +414,16 @@
     main.querySelectorAll('[data-drop]').forEach(function (zone) {
       var code = zone.getAttribute('data-drop');
       var input = zone.querySelector('input[type=file]');
-      zone.addEventListener('click', function () { input.click(); });
-      input.addEventListener('change', function () { handleFiles(code, input.files); });
+      function isBlocked() { return ans(code).satisfied === false; }
+      zone.addEventListener('click', function () { if (!isBlocked()) input.click(); });
+      input.addEventListener('change', function () { if (!isBlocked()) handleFiles(code, input.files); });
       ['dragenter', 'dragover'].forEach(function (evt) {
-        zone.addEventListener(evt, function (e) { e.preventDefault(); zone.classList.add('drag'); });
+        zone.addEventListener(evt, function (e) { e.preventDefault(); if (!isBlocked()) zone.classList.add('drag'); });
       });
       ['dragleave', 'drop'].forEach(function (evt) {
         zone.addEventListener(evt, function (e) { e.preventDefault(); zone.classList.remove('drag'); });
       });
-      zone.addEventListener('drop', function (e) { handleFiles(code, e.dataTransfer.files); });
+      zone.addEventListener('drop', function (e) { if (!isBlocked()) handleFiles(code, e.dataTransfer.files); });
     });
 
     main.querySelectorAll('[data-rmfile]').forEach(function (btn) {
@@ -396,10 +444,29 @@
 
   function handleFiles(code, fileList) {
     var a = ans(code);
+    var errEl = document.getElementById('err-' + code);
+    var errors = [];
+    var added = 0;
     Array.prototype.forEach.call(fileList, function (f) {
+      if (a.files.length + added >= MAX_FILES_PER_CRITERION) {
+        errors.push('Достигнут лимит — не более ' + MAX_FILES_PER_CRITERION + ' файлов на критерий.');
+        return;
+      }
+      var ext = (f.name.split('.').pop() || '').toLowerCase();
+      if (ALLOWED_EXT.indexOf(ext) === -1) {
+        errors.push('«' + f.name + '»: формат .' + ext + ' не поддерживается.');
+        return;
+      }
+      if (f.size > MAX_FILE_MB * 1024 * 1024) {
+        errors.push('«' + f.name + '»: файл больше ' + MAX_FILE_MB + ' МБ.');
+        return;
+      }
       a.files.push(f);
+      added++;
       if (window.CoreEcoPersistence) window.CoreEcoPersistence.saveFile(code, f);
     });
+    uploadErrors[code] = errors.join(' ');
+    if (errEl) errEl.textContent = uploadErrors[code];
     document.getElementById('files-' + code).innerHTML = filesChipsHtml(code);
     renderCurrent(); // обновить состояние карточки/сайдбар без потери файлов (уже в STATE)
   }
@@ -430,11 +497,13 @@
   // ---------------------------------------------------------------- экран результата
   function renderResultScreen(main) {
     var s = computeScore();
+    var totalFiles = allCriteria().reduce(function (n, item) { var a = STATE.answers[item.cr.code]; return n + (a ? a.files.length : 0); }, 0);
     var tierLabel = { none: 'Рейтинг не присвоен', bronze: 'БРОНЗА', silver: 'СЕРЕБРО', gold: 'ЗОЛОТО' }[s.tier];
     var html = (firstRender ? restoreBanner : '') + '<div class="result-hero">'
       + '  <div class="eyebrow" style="justify-content:center">Предварительный результат оценки</div>'
       + '  <div class="result-tier-badge ' + s.tier + '">' + tierLabel + '</div>'
       + '  <div class="result-percent">' + s.totalEarned + ' из ' + s.totalMax + ' баллов · ' + s.percent.toFixed(1) + '%</div>'
+      + '  <button type="button" class="btn btn-outline-dark btn-sm no-print" id="downloadPdfBtn" style="margin-top:18px;">⬇ Скачать отчёт в PDF</button>'
       + '</div>'
       + '<div class="result-grid">'
       + s.byCategory.map(function (c) {
@@ -454,16 +523,20 @@
       html += '</div>';
     }
 
-    html += '<div class="lead-form">'
+    html += '<div class="lead-form no-print">'
       + '<h3 class="h-md" style="font-size:20px;">Оставить заявку на официальную сертификацию</h3>'
-      + '<p style="color:var(--ink-700);font-size:14px;margin-top:8px;">Результат выше — предварительный и рассчитан по введённым вами данным. Эксперт CORE.ECO проверит документы и подтверждающие файлы и подготовит официальное заключение.</p>'
+      + '<p style="color:var(--ink-700);font-size:14px;margin-top:8px;">Результат выше — предварительный и рассчитан по введённым вами данным. Эксперт CORE.ECO проверит документы и подготовит официальное заключение.</p>'
+      + (totalFiles
+        ? '<div class="side-note" style="margin-top:16px;">Вы загрузили ' + totalFiles + ' файл(ов) — они хранятся только в этом браузере и не отправляются вместе с заявкой автоматически. Укажите ссылку на облачное хранилище с документами ниже или отправьте их на core.eco@core-xp.ru после отправки заявки.</div>'
+        : '')
       + '<form id="leadForm">'
       + '  <div class="form-grid">'
-      + '    <div><label>Имя</label><input name="name" required></div>'
-      + '    <div><label>Компания</label><input name="company"></div>'
-      + '    <div><label>E-mail</label><input name="email" type="email" required></div>'
-      + '    <div><label>Телефон</label><input name="phone"></div>'
-      + '    <div class="full"><label>Комментарий</label><textarea name="message" rows="3"></textarea></div>'
+      + '    <div><label>Имя</label><input name="name" placeholder="Как к вам обращаться" required></div>'
+      + '    <div><label>Компания</label><input name="company" placeholder="Необязательно"></div>'
+      + '    <div><label>E-mail</label><input name="email" type="email" placeholder="Куда прислать заключение" required></div>'
+      + '    <div><label>Телефон</label><input name="phone" placeholder="Необязательно"></div>'
+      + '    <div class="full"><label>Ссылка на файлы (Я.Диск, Google Диск и т.п.)</label><input name="files_link" placeholder="Необязательно — можно прислать позже письмом"></div>'
+      + '    <div class="full"><label>Комментарий</label><textarea name="message" rows="3" placeholder="Например: когда удобно созвониться"></textarea></div>'
       + '  </div>'
       + '  <input type="hidden" name="stage" value="' + (STATE.stage || '') + '">'
       + '  <input type="hidden" name="address" value="' + escapeHtml(STATE.address || '') + '">'
@@ -476,29 +549,26 @@
 
     main.innerHTML = html;
 
+    var downloadBtn = document.getElementById('downloadPdfBtn');
+    if (downloadBtn) downloadBtn.addEventListener('click', function () { window.print(); });
+
     var form = document.getElementById('leadForm');
     document.getElementById('resultSummaryField').value = buildSummaryText(s);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var msg = document.getElementById('leadMsg');
-      var totalFiles = allCriteria().reduce(function (n, item) { var a = STATE.answers[item.cr.code]; return n + (a ? a.files.length : 0); }, 0);
-      if (!FORM_ENDPOINT || FORM_ENDPOINT.indexOf('YOUR_FORM_ID') !== -1) {
-        msg.textContent = 'Демо-режим: форма ещё не подключена к реальному приёму заявок (нужен ID формы Formspree). Данные оценки и ' + totalFiles + ' файл(ов) сохранены только в этой сессии браузера.';
+      if (window.CoreEcoIsDemo ? window.CoreEcoIsDemo(FORM_ENDPOINT) : (!FORM_ENDPOINT || FORM_ENDPOINT.indexOf('YOUR_FORM_ID') !== -1)) {
+        msg.textContent = 'Демо-режим: форма ещё не подключена к реальному приёму заявок. Результат оценки сохранён только в этой сессии браузера — напишите нам напрямую на core.eco@core-xp.ru, приложив отчёт (кнопка «Скачать отчёт в PDF» выше).';
         msg.className = 'form-msg err';
         console.log('[assessment demo submit]', Object.fromEntries(new FormData(form)), STATE.answers);
         return;
       }
-      var fd = new FormData(form);
-      var attached = 0;
-      allCriteria().forEach(function (item) {
-        var a = STATE.answers[item.cr.code];
-        if (a) a.files.forEach(function (f) { if (attached < 15) { fd.append('files[]', f, item.cr.code + '__' + f.name); attached++; } });
-      });
+      var fd = new FormData(form); // без вложений: Formspree на бесплатном тарифе их не поддерживает — файлы передаются отдельно по ссылке/почте
       var btn = form.querySelector('button[type=submit]');
       btn.setAttribute('disabled', 'true'); btn.textContent = 'Отправляем…';
       fetch(FORM_ENDPOINT, { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
         .then(function (r) { if (r.ok) return r.json(); throw new Error('network'); })
-        .then(function () { msg.textContent = 'Заявка и документы отправлены. Эксперт CORE.ECO свяжется с вами.'; msg.className = 'form-msg ok'; form.reset(); })
+        .then(function () { msg.textContent = 'Заявка отправлена. Эксперт CORE.ECO свяжется с вами и запросит документы, если вы не приложили ссылку.'; msg.className = 'form-msg ok'; form.reset(); })
         .catch(function () { msg.textContent = 'Не получилось отправить. Попробуйте написать на core.eco@core-xp.ru напрямую.'; msg.className = 'form-msg err'; })
         .finally(function () { btn.removeAttribute('disabled'); btn.textContent = 'Отправить заявку'; });
     });
@@ -513,6 +583,7 @@
 
   // ---------------------------------------------------------------- главный рендер
   var firstRender = true;
+  var lastScrolledStep = null; // прокручиваем страницу только при переходе между шагами, а не при каждом клике внутри критерия (см. правку №8)
   function render() {
     renderStepper();
     var main = document.getElementById('assessMain');
@@ -524,7 +595,10 @@
     renderSidebar();
     var resetLink = document.getElementById('resetProgress');
     if (resetLink) resetLink.addEventListener('click', function (e) { e.preventDefault(); resetProgress(); });
-    if (!firstRender) window.scrollTo({ top: document.getElementById('assessBody').offsetTop - 90, behavior: 'smooth' });
+    if (!firstRender && STATE.step !== lastScrolledStep) {
+      window.scrollTo({ top: document.getElementById('assessBody').offsetTop - 90, behavior: 'smooth' });
+    }
+    lastScrolledStep = STATE.step;
     firstRender = false;
     persist();
   }
@@ -532,6 +606,7 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     restoreFromStorage();
+    if (pendingCategory && STATE.stage) { STATE.step = pendingCategory; pendingCategory = null; }
     render();
   });
 })();

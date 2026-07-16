@@ -1,7 +1,7 @@
 // CORE.ECO · МКД — плавающая кнопка «Сообщить о проблеме» на каждой странице сайта
 (function () {
   'use strict';
-  var FEEDBACK_ENDPOINT = 'https://formspree.io/f/YOUR_FEEDBACK_FORM_ID'; // TODO: заменить на реальный ID формы Formspree
+  var FEEDBACK_ENDPOINT = (window.CORE_ECO_CONFIG && window.CORE_ECO_CONFIG.FEEDBACK_ENDPOINT) || 'https://formspree.io/f/YOUR_FEEDBACK_FORM_ID';
 
   var root = document.body.getAttribute('data-root') || '';
   var html = ''
@@ -38,18 +38,19 @@
   form.addEventListener('submit', function (e) {
     e.preventDefault();
     var msg = document.getElementById('fbMsg');
-    if (!FEEDBACK_ENDPOINT || FEEDBACK_ENDPOINT.indexOf('YOUR_FEEDBACK_FORM_ID') !== -1) {
-      msg.textContent = 'Демо-режим: форма обратной связи ещё не подключена к реальному приёму сообщений.';
+    if (window.CoreEcoIsDemo ? window.CoreEcoIsDemo(FEEDBACK_ENDPOINT) : (!FEEDBACK_ENDPOINT || FEEDBACK_ENDPOINT.indexOf('YOUR_FEEDBACK_FORM_ID') !== -1)) {
+      msg.textContent = 'Демо-режим: форма обратной связи пока не подключена к реальному приёму сообщений. Опишите проблему в письме на core.eco@core-xp.ru — мы её поправим.';
       msg.className = 'form-msg err';
       console.log('[feedback demo submit]', Object.fromEntries(new FormData(form)));
       return;
     }
     var btn = form.querySelector('button[type=submit]');
-    btn.setAttribute('disabled', 'true');
+    var btnLabel = btn.textContent;
+    btn.setAttribute('disabled', 'true'); btn.textContent = 'Отправляем…';
     fetch(FEEDBACK_ENDPOINT, { method: 'POST', body: new FormData(form), headers: { Accept: 'application/json' } })
       .then(function (r) { if (r.ok) return r.json(); throw new Error('network'); })
-      .then(function () { msg.textContent = 'Спасибо, сообщение отправлено!'; msg.className = 'form-msg ok'; form.reset(); })
+      .then(function () { msg.textContent = 'Спасибо! Сообщение отправлено команде CORE.ECO — мы разберёмся.'; msg.className = 'form-msg ok'; form.reset(); })
       .catch(function () { msg.textContent = 'Не удалось отправить. Напишите на core.eco@core-xp.ru.'; msg.className = 'form-msg err'; })
-      .finally(function () { btn.removeAttribute('disabled'); });
+      .finally(function () { btn.removeAttribute('disabled'); btn.textContent = btnLabel; });
   });
 })();

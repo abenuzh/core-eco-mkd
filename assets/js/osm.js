@@ -5,15 +5,24 @@
   'use strict';
 
   var NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
-  var OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
+  // несколько публичных зеркал Overpass API — при сбое/перегрузке одного пробуем следующее (см. правку №6)
+  var OVERPASS_MIRRORS = ['https://overpass-api.de/api/interpreter', 'https://overpass.osm.ch/api/interpreter'];
 
-  function geocodeAddress(address) {
+  function delay(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  function geocodeAddress(address, attempt) {
+    attempt = attempt || 1;
     var url = NOMINATIM_URL + '?format=json&limit=1&addressdetails=0&q=' + encodeURIComponent(address);
     return fetch(url, { headers: { Accept: 'application/json' } })
       .then(function (r) { if (!r.ok) throw new Error('geocode-failed'); return r.json(); })
       .then(function (rows) {
         if (!rows || !rows.length) throw new Error('not-found');
         return { lat: parseFloat(rows[0].lat), lon: parseFloat(rows[0].lon), label: rows[0].display_name };
+      })
+      .catch(function (err) {
+        if (err.message === 'not-found') throw err; // адрес не найден — повтор бессмысленен
+        if (attempt < 2) return delay(700).then(function () { return geocodeAddress(address, attempt + 1); });
+        throw err;
       });
   }
 
@@ -51,26 +60,41 @@
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
+  function queryOverpass(ql, mirrorIndex) {
+    mirrorIndex = mirrorIndex || 0;
+    var url = OVERPASS_MIRRORS[mirrorIndex];
+    return fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(ql) })
+      .then(function (r) {
+        if (!r.ok) throw new Error('overpass-failed-' + r.status);
+        return r.json();
+      })
+      .catch(function (err) {
+        var nextMirror = mirrorIndex + 1;
+        if (nextMirror < OVERPASS_MIRRORS.length) {
+          return delay(400).then(function () { return queryOverpass(ql, nextMirror); });
+        }
+        throw err;
+      });
+  }
+
   function checkRule(ruleKey, lat, lon) {
     var rule = GEO_RULES[ruleKey];
     if (!rule) return Promise.reject(new Error('unknown-rule'));
     var ql = buildOverpassQL(lat, lon, rule.radius, rule.query);
-    return fetch(OVERPASS_URL, { method: 'POST', body: 'data=' + encodeURIComponent(ql) })
-      .then(function (r) { if (!r.ok) throw new Error('overpass-failed'); return r.json(); })
-      .then(function (json) {
-        var els = json.elements || [];
-        var nearest = null;
-        els.forEach(function (el) {
-          var elat = el.lat || (el.center && el.center.lat);
-          var elon = el.lon || (el.center && el.center.lon);
-          if (elat == null || elon == null) return;
-          var d = haversine(lat, lon, elat, elon);
-          if (nearest === null || d < nearest) nearest = d;
-        });
-        var found = els.length > 0;
-        var pass = rule.mode === 'presence' ? found : !found;
-        return { rule: rule, found: found, nearest: nearest, pass: pass, radius: rule.radius };
+    return queryOverpass(ql).then(function (json) {
+      var els = json.elements || [];
+      var nearest = null;
+      els.forEach(function (el) {
+        var elat = el.lat || (el.center && el.center.lat);
+        var elon = el.lon || (el.center && el.center.lon);
+        if (elat == null || elon == null) return;
+        var d = haversine(lat, lon, elat, elon);
+        if (nearest === null || d < nearest) nearest = d;
       });
+      var found = els.length > 0;
+      var pass = rule.mode === 'presence' ? found : !found;
+      return { rule: rule, found: found, nearest: nearest, pass: pass, radius: rule.radius };
+    });
   }
 
   global.CoreEcoOSM = { geocodeAddress: geocodeAddress, checkRule: checkRule, GEO_RULES: GEO_RULES };
