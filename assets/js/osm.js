@@ -5,15 +5,26 @@
   'use strict';
 
   var NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
-  // несколько публичных зеркал Overpass API — при сбое/перегрузке одного пробуем следующее (см. правку №6)
-  var OVERPASS_MIRRORS = ['https://overpass-api.de/api/interpreter', 'https://overpass.osm.ch/api/interpreter'];
+  // несколько публичных зеркал Overpass API — при сбое/перегрузке одного пробуем следующее (см. правку №6).
+  // 260720: osm.ch поставлено первым — по факту сейчас надёжнее основного overpass-api.de (см. диагностику
+  // в PROJECT_STATUS.md), overpass-api.de оставлено вторым как резерв.
+  var OVERPASS_MIRRORS = ['https://overpass.osm.ch/api/interpreter', 'https://overpass-api.de/api/interpreter'];
+  var FETCH_TIMEOUT_MS = 8000; // без таймаута зависший сервер держит запрос десятками секунд — пользователю кажется, что сайт не работает
 
   function delay(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
+
+  function fetchWithTimeout(url, options) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, FETCH_TIMEOUT_MS);
+    options = options || {};
+    options.signal = controller.signal;
+    return fetch(url, options).finally(function () { clearTimeout(timer); });
+  }
 
   function geocodeAddress(address, attempt) {
     attempt = attempt || 1;
     var url = NOMINATIM_URL + '?format=json&limit=1&addressdetails=0&q=' + encodeURIComponent(address);
-    return fetch(url, { headers: { Accept: 'application/json' } })
+    return fetchWithTimeout(url, { headers: { Accept: 'application/json' } })
       .then(function (r) { if (!r.ok) throw new Error('geocode-failed'); return r.json(); })
       .then(function (rows) {
         if (!rows || !rows.length) throw new Error('not-found');
@@ -63,7 +74,7 @@
   function queryOverpass(ql, mirrorIndex) {
     mirrorIndex = mirrorIndex || 0;
     var url = OVERPASS_MIRRORS[mirrorIndex];
-    return fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(ql) })
+    return fetchWithTimeout(url, { method: 'POST', body: 'data=' + encodeURIComponent(ql) })
       .then(function (r) {
         if (!r.ok) throw new Error('overpass-failed-' + r.status);
         return r.json();
