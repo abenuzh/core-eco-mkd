@@ -530,6 +530,7 @@
     }
 
     html += '<div class="lead-form no-print">'
+      + '<div id="leadFormWrap">'
       + '<h3 class="h-md" style="font-size:20px;">Оставить заявку на официальную сертификацию</h3>'
       + '<p style="color:var(--ink-700);font-size:14px;margin-top:8px;">Результат выше — предварительный и рассчитан по введённым вами данным. Эксперт CORE.ECO проверит документы и подготовит официальное заключение.</p>'
       + (totalFiles
@@ -551,6 +552,8 @@
       + '  <button type="submit" class="btn btn-primary" style="margin-top:20px;">Отправить заявку</button>'
       + '  <div class="form-msg" id="leadMsg"></div>'
       + '</form>'
+      + '</div>'
+      + '<div class="form-msg ok" id="leadSuccess" style="display:none;font-size:16px;"></div>'
       + '</div>';
 
     main.innerHTML = html;
@@ -574,9 +577,13 @@
       btn.setAttribute('disabled', 'true'); btn.textContent = 'Отправляем…';
       fetch(FORM_ENDPOINT, { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
         .then(function (r) { if (r.ok) return r.json(); throw new Error('network'); })
-        .then(function () { msg.textContent = 'Заявка отправлена. Эксперт CORE.ECO свяжется с вами и запросит документы, если вы не приложили ссылку.'; msg.className = 'form-msg ok'; form.reset(); })
-        .catch(function () { msg.textContent = 'Не получилось отправить. Попробуйте написать на core.eco@core-xp.ru напрямую.'; msg.className = 'form-msg err'; })
-        .finally(function () { btn.removeAttribute('disabled'); btn.textContent = 'Отправить заявку'; });
+        .then(function () {
+          document.getElementById('leadFormWrap').style.display = 'none';
+          var success = document.getElementById('leadSuccess');
+          success.textContent = 'Заявка отправлена. Эксперт CORE.ECO свяжется с вами и запросит документы, если вы не приложили ссылку.';
+          success.style.display = 'block';
+        })
+        .catch(function () { msg.textContent = 'Не получилось отправить. Попробуйте написать на core.eco@core-xp.ru напрямую.'; msg.className = 'form-msg err'; btn.removeAttribute('disabled'); btn.textContent = 'Отправить заявку'; });
     });
   }
 
