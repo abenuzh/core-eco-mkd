@@ -21,7 +21,19 @@
     return fetch(url, options).finally(function () { clearTimeout(timer); });
   }
 
-  function geocodeAddress(address, attempt) {
+  // геокодируем сначала адрес как есть; если Nominatim ничего не нашёл (частый случай для домов,
+  // которых ещё нет в адресной базе OSM — тогда добавление страны в конце ломает даже поиск по улице,
+  // см. правку 260720) — пробуем ещё раз с явным "Россия" в конце, это иногда помогает по-другому.
+  function geocodeAddress(address) {
+    return geocodeOnce(address).catch(function (err) {
+      if (err.message === 'not-found' && !/росси/i.test(address)) {
+        return geocodeOnce(address + ', Россия');
+      }
+      throw err;
+    });
+  }
+
+  function geocodeOnce(address, attempt) {
     attempt = attempt || 1;
     var url = NOMINATIM_URL + '?format=json&limit=1&addressdetails=0&q=' + encodeURIComponent(address);
     return fetchWithTimeout(url, { headers: { Accept: 'application/json' } })
@@ -31,8 +43,8 @@
         return { lat: parseFloat(rows[0].lat), lon: parseFloat(rows[0].lon), label: rows[0].display_name };
       })
       .catch(function (err) {
-        if (err.message === 'not-found') throw err; // адрес не найден — повтор бессмысленен
-        if (attempt < 2) return delay(700).then(function () { return geocodeAddress(address, attempt + 1); });
+        if (err.message === 'not-found') throw err; // адрес не найден — повтор с тем же текстом бессмысленен
+        if (attempt < 2) return delay(700).then(function () { return geocodeOnce(address, attempt + 1); });
         throw err;
       });
   }
