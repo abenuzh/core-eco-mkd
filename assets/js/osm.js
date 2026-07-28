@@ -6,9 +6,15 @@
 
   var NOMINATIM_URL = 'https://nominatim.openstreetmap.org/search';
   // несколько публичных зеркал Overpass API — при сбое/перегрузке одного пробуем следующее (см. правку №6).
-  // 260720: osm.ch поставлено первым — по факту сейчас надёжнее основного overpass-api.de (см. диагностику
-  // в PROJECT_STATUS.md), overpass-api.de оставлено вторым как резерв.
-  var OVERPASS_MIRRORS = ['https://overpass.osm.ch/api/interpreter', 'https://overpass-api.de/api/interpreter'];
+  // 260728: УБРАН overpass.osm.ch — это зеркало Швейцарского сообщества OSM, оно содержит данные ТОЛЬКО
+  // по Швейцарии. Проверено вживую: кафе в радиусе 500 м — Цюрих 30 объектов, Москва/СПб — 0. Оно отвечало
+  // HTTP 200 с пустым списком, поэтому переключения на резерв не происходило, и авто-проверка по всей России
+  // выдавала «ничего не найдено». Теперь первыми идут зеркала с полными (общемировыми/российскими) данными.
+  var OVERPASS_MIRRORS = [
+    'https://overpass-api.de/api/interpreter',
+    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter'
+  ];
   var FETCH_TIMEOUT_MS = 8000; // без таймаута зависший сервер держит запрос десятками секунд — пользователю кажется, что сайт не работает
 
   function delay(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
@@ -59,9 +65,14 @@
     '1.3b': { mode: 'presence', radius: 1000, query: '[amenity=restaurant][amenity=cafe][amenity=fast_food]', label: 'Объект общественного питания' },
     '1.4': { mode: 'presence', radius: 1500, query: '[leisure=park][landuse=forest][leisure=garden]', label: 'Озеленённая территория общего пользования' },
     '1.5': { mode: 'presence', radius: 1000, query: '[leisure=sports_centre][leisure=fitness_centre][leisure=stadium][leisure=pitch]', label: 'Объект спортивной инфраструктуры' },
-    '1.6': { mode: 'presence', radius: 1000, query: '[natural=water][waterway=river]', label: 'Водный объект' },
+    // ГОСТ 1.6: искусственный водоём (пруд/фонтан) в 500 м ИЛИ естественный водоём в 1000 м — две ветки,
+    // критерий засчитывается, если выполнена ЛЮБАЯ (логика ИЛИ обрабатывается в wizard.js).
+    '1.6a': { mode: 'presence', radius: 500, query: '[amenity=fountain][water=pond][water=reservoir][leisure=water_park]', label: 'Искусственный водоём (пруд, фонтан)' },
+    '1.6b': { mode: 'presence', radius: 1000, query: '[natural=water][waterway=river][waterway=stream]', label: 'Естественный водоём (река, озеро)' },
     '1.7': { mode: 'absence', radius: 1000, query: '[highway=motorway][highway=trunk]', label: 'Автомобильная дорога национального значения' },
-    '1.8': { mode: 'absence', radius: 1000, query: '[amenity=grave_yard][landuse=cemetery][amenity=crematorium][amenity=prison]', label: 'Опасный/нежелательный объект (кладбище, СИЗО, крематорий и т.п.)' }
+    // ГОСТ 1.8: добавлены полигоны/станции ТКО. Психоневрологические/наркологические больницы в OSM
+    // размечены нестабильно и надёжно не проверяются автоматически — их пользователь отмечает вручную.
+    '1.8': { mode: 'absence', radius: 1000, query: '[amenity=grave_yard][landuse=cemetery][amenity=crematorium][amenity=prison][landuse=landfill][amenity=waste_transfer_station]', label: 'Опасный/нежелательный объект (кладбище, СИЗО, крематорий, полигон ТКО и т.п.)' }
   };
 
   function buildOverpassQL(lat, lon, radius, tagExpr) {

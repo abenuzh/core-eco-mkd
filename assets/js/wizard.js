@@ -155,13 +155,30 @@
   // после ~9-го шага без намёка на прокрутку (правка №10). Решение: у шагов-категорий убран
   // повторяющий номер текст (он и так есть в самом кружке и в заголовке категории), плюс активный
   // шаг всегда докручивается в видимую область, плюс страховка — растушёванные края при переполнении.
-  function renderStepper() {
+  // сколько критериев категории реально отвечено (нужно, чтобы кружок степпера красился честно — правка A2)
+  function categoryFill(catId) {
+    var cat = null;
+    for (var k = 0; k < GOST_DATA.categories.length; k++) { if (GOST_DATA.categories[k].id === catId) { cat = GOST_DATA.categories[k]; break; } }
+    if (!cat) return { answered: 0, total: 0 };
+    var answered = 0;
+    cat.criteria.forEach(function (cr) { var a = STATE.answers[cr.code]; if (a && a.satisfied !== undefined) answered++; });
+    return { answered: answered, total: cat.criteria.length };
+  }
+
+  function renderStepper(scrollActiveIntoView) {
     var el = document.getElementById('stepper');
     if (!el) return;
-    var html = '<div class="assess-step ' + (STATE.step === 0 ? 'active' : STATE.step > 0 ? 'done' : '') + '" data-go="0"><span class="dot">S</span>Стадия</div>';
+    // «Стадия» помечается пройденной только если стадия реально выбрана (а не просто «мы уже дальше»)
+    var stageCls = STATE.step === 0 ? 'active' : (STATE.stage ? 'done' : '');
+    var html = '<div class="assess-step ' + stageCls + '" data-go="0"><span class="dot">S</span>Стадия</div>';
     for (var i = 1; i <= 10; i++) {
       html += '<div class="assess-connector"></div>';
-      html += '<div class="assess-step ' + (STATE.step === i ? 'active' : STATE.step > i ? 'done' : '') + '" data-go="' + i + '" title="Категория ' + i + '"><span class="dot">' + i + '</span></div>';
+      // A2: кружок зелёный ('done') только когда отвечены ВСЕ критерии категории; часть → 'partial'; иначе пусто.
+      // Раньше красился по 'STATE.step > i' — т.е. просто за то, что пролистнули мимо, вводя в заблуждение.
+      var cls;
+      if (STATE.step === i) cls = 'active';
+      else { var f = categoryFill(i); cls = (f.total && f.answered === f.total) ? 'done' : (f.answered > 0 ? 'partial' : ''); }
+      html += '<div class="assess-step ' + cls + '" data-go="' + i + '" title="Категория ' + i + '"><span class="dot">' + i + '</span></div>';
     }
     html += '<div class="assess-connector"></div>';
     html += '<div class="assess-step ' + (STATE.step === 11 ? 'active' : '') + '" data-go="11"><span class="dot">✓</span>Результат</div>';
@@ -172,8 +189,12 @@
         if (target <= maxReachableStep()) { STATE.step = target; render(); }
       });
     });
-    var activeEl = el.querySelector('.assess-step.active');
-    if (activeEl && activeEl.scrollIntoView) activeEl.scrollIntoView({ block: 'nearest', inline: 'center' });
+    // A1: докручиваем активный шаг в зону видимости ТОЛЬКО при реальной смене шага. Раньше это происходило
+    // на каждый ответ внутри категории и отбрасывало страницу вверх.
+    if (scrollActiveIntoView) {
+      var activeEl = el.querySelector('.assess-step.active');
+      if (activeEl && activeEl.scrollIntoView) activeEl.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
   }
 
   function maxReachableStep() {
@@ -229,10 +250,17 @@
       + '</div>';
 
     if (cat.id === 1) {
+      // Часть B: если подключён DaData — вводим адрес в любом виде и выбираем дом из подсказок (точные координаты).
+      var daOn = !!(window.CoreEcoDaData && CoreEcoDaData.hasToken());
+      var addrPh = daOn ? 'Начните вводить адрес и выберите дом из списка…' : 'Например: Москва, ул. Тверская, д. 1';
+      var addrHint = daOn
+        ? 'Вводите адрес в любом виде — появятся подсказки. Выберите свой дом из списка: подставится точный адрес и координаты именно этого дома.'
+        : 'Формат: город, улица, номер дома — через запятую, без «г.», «ул.» обязательно писать не нужно. Чем точнее адрес, тем надёжнее автопроверка.';
       html += '<div class="geo-box">'
-        + '<label>Адрес дома (для автоматической проверки критериев 1.1–1.8 по OpenStreetMap)</label>'
-        + '<div class="geo-row"><input class="field" id="geoAddress" placeholder="Например: Москва, ул. Тверская, д. 1" value="' + (STATE.address || '') + '"><button class="btn btn-primary btn-sm" id="geoGo" style="flex-shrink:0">Определить координаты</button></div>'
-        + '<div class="geo-hint">Формат: город, улица, номер дома — через запятую, без «г.», «ул.» обязательно писать не нужно. Чем точнее адрес, тем надёжнее автопроверка.</div>'
+        + '<label>Адрес дома (для автоматической проверки критериев 1.1–1.8)</label>'
+        + '<div class="geo-row"><div class="geo-input-wrap"><input class="field" id="geoAddress" autocomplete="off" placeholder="' + addrPh + '" value="' + escapeHtml(STATE.address || '') + '"><div class="geo-suggest" id="geoSuggest"></div></div><button class="btn btn-primary btn-sm" id="geoGo" style="flex-shrink:0">Определить координаты</button></div>'
+        + '<div class="geo-row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" id="geoCheckAll" style="flex:1;">⚡ Проверить все критерии по адресу</button></div>'
+        + '<div class="geo-hint">' + addrHint + '</div>'
         + '<div class="geo-status" id="geoStatusEl">' + (STATE.geoStatus || 'Проверка — предварительная, по открытым данным OSM. Не заменяет официальную проверку по ЕИСЖС/ГИС.') + '</div>'
         + '</div>';
     }
@@ -320,14 +348,60 @@
 
   // сопоставление кода критерия со связкой правил геопроверки (см. assets/js/osm.js GEO_RULES)
   function geoKeysFor(code) {
-    var map = { '1.1': ['1.1'], '1.2': ['1.2a', '1.2b', '1.2c'], '1.3': ['1.3a', '1.3b'], '1.4': ['1.4'], '1.5': ['1.5'], '1.6': ['1.6'], '1.7': ['1.7'], '1.8': ['1.8'] };
+    var map = { '1.1': ['1.1'], '1.2': ['1.2a', '1.2b', '1.2c'], '1.3': ['1.3a', '1.3b'], '1.4': ['1.4'], '1.5': ['1.5'], '1.6': ['1.6a', '1.6b'], '1.7': ['1.7'], '1.8': ['1.8'] };
     return map[code] || [];
   }
 
   function geoResultLabel(code) {
     var a = ans(code);
     if (!a.geo) return 'ещё не проверено';
-    return a.geo.summary;
+    var html = escapeHtml(a.geo.summary);
+    // A4: если авто-результат расходится с текущим ответом — предлагаем применить, но НЕ перезаписываем молча
+    if (typeof a.geo.pass === 'boolean' && a.satisfied !== a.geo.pass) {
+      html += ' · <a href="#" data-apply-geo="' + code + '">применить авто-результат</a>';
+    }
+    return html;
+  }
+
+  // ГОСТ 1.6 (вода) — единственный критерий-«ИЛИ»: достаточно искусственного водоёма в 500 м ЛИБО естественного в 1000 м
+  function isOrCriterion(code) { return code === '1.6'; }
+
+  // единая авто-проверка одного критерия по адресу: используется и кнопкой у критерия, и кнопкой «Проверить всё» (C4).
+  // A4: авто-результат подставляется в ответ ТОЛЬКО если пользователь ещё не ответил вручную — иначе даём подсказку.
+  function runGeoCheck(code) {
+    var keys = geoKeysFor(code);
+    if (!keys.length || !STATE.geo) return Promise.resolve(null);
+    return Promise.all(keys.map(function (k) { return CoreEcoOSM.checkRule(k, STATE.geo.lat, STATE.geo.lon); }))
+      .then(function (results) {
+        var pass = isOrCriterion(code)
+          ? results.some(function (r) { return r.pass; })
+          : results.every(function (r) { return r.pass; });
+        var details = results.map(function (r) {
+          var distTxt = r.nearest != null ? Math.round(r.nearest) + ' м' : '—';
+          return r.rule.label + ': ' + (r.found ? 'найдено (' + distTxt + ')' : 'не найдено') + ' в радиусе ' + r.radius + ' м';
+        }).join('; ');
+        var a = ans(code);
+        a.geo = { pass: pass, summary: (pass ? '✓ похоже, выполнено — ' : '⚠ похоже, не выполнено — ') + details };
+        if (a.satisfied === undefined) a.satisfied = pass;
+        return a.geo;
+      });
+  }
+
+  // точечно обновляет одну карточку критерия (статус + результат гео-проверки) без полной перерисовки —
+  // для живого отображения «проверяем… → выполнено/не выполнено» во время «Проверить всё»
+  function updateCriterionCard(code) {
+    var a = ans(code);
+    var card = document.querySelector('.criterion[data-code="' + code + '"]');
+    if (card) {
+      card.classList.toggle('answered', a.satisfied === true);
+      card.classList.toggle('skipped', a.satisfied === false);
+      var yes = card.querySelector('[data-ans="' + code + '"][data-val="yes"]');
+      var no = card.querySelector('[data-ans="' + code + '"][data-val="no"]');
+      if (yes) yes.classList.toggle('on', a.satisfied === true);
+      if (no) no.classList.toggle('off-x', a.satisfied === false);
+    }
+    var res = document.getElementById('georesult-' + code);
+    if (res) { res.className = 'result'; res.innerHTML = geoResultLabel(code); }
   }
 
   // приводим адрес к единому шаблону перед геокодированием: убираем лишние пробелы и нормализуем запятые.
@@ -345,8 +419,134 @@
     return a;
   }
 
+  // единое геокодирование адреса: сначала DaData (точно для РФ, включая корпуса «д 4 к 6»), при отсутствии
+  // токена или неудаче — резервный OSM Nominatim. Из-за отсутствия этого раньше кнопки «Определить координаты»
+  // и «Проверить всё» слали адрес только в слабый Nominatim и не находили реальные дома.
+  function resolveAddress(address) {
+    if (window.CoreEcoDaData && CoreEcoDaData.hasToken()) {
+      return CoreEcoDaData.geocode(address).catch(function () { return CoreEcoOSM.geocodeAddress(address); });
+    }
+    return CoreEcoOSM.geocodeAddress(address);
+  }
+
+  // Часть B: подсказки адреса DaData под полем ввода — набираем в любом виде, выбираем дом мышью/стрелками.
+  // При выборе подставляется точный адрес и координаты дома в STATE.geo (без «угадывания» первого результата).
+  function wireAddressAutocomplete(addrInput) {
+    var box = document.getElementById('geoSuggest');
+    if (!box || !addrInput || !window.CoreEcoDaData || !CoreEcoDaData.hasToken()) return;
+    var timer = null, items = [], activeIdx = -1;
+
+    function close() { box.classList.remove('open'); box.innerHTML = ''; activeIdx = -1; }
+
+    function pick(i) {
+      var s = items[i]; if (!s) return;
+      var g = CoreEcoDaData.toGeo(s);
+      addrInput.value = s.value;
+      STATE.address = s.value;
+      var statusEl = document.getElementById('geoStatusEl');
+      if (g.lat != null && g.lon != null) {
+        STATE.geo = { lat: g.lat, lon: g.lon, label: s.value };
+        if (statusEl) {
+          statusEl.className = 'geo-status';
+          statusEl.textContent = (g.hasHouse && g.precise)
+            ? 'Адрес подтверждён: ' + s.value + '. Координаты дома получены — можно проверять критерии.'
+            : 'Адрес принят: ' + s.value + '. Координаты неточные (не до дома) — уточните номер дома для надёжной проверки.';
+        }
+      } else if (statusEl) {
+        statusEl.textContent = 'У этого адреса нет координат в базе — уточните дом или нажмите «Определить координаты».';
+        statusEl.className = 'geo-status err';
+      }
+      close();
+    }
+
+    function draw() {
+      if (!items.length) { close(); return; }
+      box.innerHTML = items.map(function (s, i) {
+        var noHouse = !(s.data && s.data.house) ? '<span class="sug-tag">без дома</span>' : '';
+        return '<button type="button" data-sug="' + i + '"' + (i === activeIdx ? ' class="active"' : '') + '>' + escapeHtml(s.value) + noHouse + '</button>';
+      }).join('');
+      box.classList.add('open');
+      // mousedown (не click), чтобы выбор сработал раньше события blur поля
+      box.querySelectorAll('[data-sug]').forEach(function (b) {
+        b.addEventListener('mousedown', function (e) { e.preventDefault(); pick(parseInt(b.getAttribute('data-sug'), 10)); });
+      });
+    }
+
+    addrInput.addEventListener('input', function () {
+      var q = addrInput.value;
+      if (timer) clearTimeout(timer);
+      if (q.trim().length < 3) { close(); return; }
+      timer = setTimeout(function () {
+        CoreEcoDaData.suggest(q).then(function (list) { items = list; activeIdx = -1; draw(); }).catch(function () { close(); });
+      }, 220);
+    });
+    addrInput.addEventListener('keydown', function (e) {
+      if (!box.classList.contains('open')) return;
+      if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(items.length - 1, activeIdx + 1); draw(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(0, activeIdx - 1); draw(); }
+      else if (e.key === 'Enter' && activeIdx >= 0) { e.preventDefault(); pick(activeIdx); }
+      else if (e.key === 'Escape') { close(); }
+    });
+    addrInput.addEventListener('blur', function () { setTimeout(close, 150); });
+  }
+
+  // C4: одна кнопка «Проверить всё» — при необходимости определяет координаты, затем последовательно
+  // (чтобы не перегружать бесплатный OSM) прогоняет все 8 геокритериев категории 1 с индикатором прогресса.
+  function wireGeoCheckAll() {
+    var btn = document.getElementById('geoCheckAll');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      var statusEl = document.getElementById('geoStatusEl');
+      var codes = ['1.1', '1.2', '1.3', '1.4', '1.5', '1.6', '1.7', '1.8'];
+      function runAll() {
+        var i = 0, ok = 0;
+        statusEl.className = 'geo-status';
+        (function next() {
+          if (i >= codes.length) {
+            statusEl.textContent = 'Готово: проверено ' + ok + ' из ' + codes.length + ' пунктов. Статусы проставлены под каждым критерием — при необходимости поправьте вручную.';
+            renderCurrent();
+            return;
+          }
+          var code = codes[i];
+          statusEl.textContent = 'Проверяем критерий ' + code + '… (' + (i + 1) + ' из ' + codes.length + ')';
+          // сразу показываем «проверяем…» у самого критерия
+          var res = document.getElementById('georesult-' + code);
+          if (res) { res.className = 'result checking'; res.textContent = 'проверяем…'; }
+          runGeoCheck(code).then(function () { ok++; }, function () {}).then(function () {
+            updateCriterionCard(code); // отрисовать результат и статус выполнено/не выполнено сразу
+            updateSidebar();
+            i++; next();
+          });
+        })();
+      }
+      if (STATE.geo) { runAll(); return; }
+      // координат ещё нет — сначала определим их по введённому адресу
+      var addrInput = document.getElementById('geoAddress');
+      var raw = ((addrInput && addrInput.value) || '').trim();
+      if (!raw) { alert('Введите адрес дома в поле выше.'); return; }
+      var address = normalizeAddress(raw);
+      if (addrInput) addrInput.value = address;
+      STATE.address = address;
+      statusEl.textContent = 'Определяем координаты…';
+      statusEl.className = 'geo-status';
+      resolveAddress(address).then(function (geo) {
+        STATE.geo = geo;
+        runAll();
+      }).catch(function (err) {
+        statusEl.textContent = (err && err.message === 'not-found')
+          ? 'Адрес не найден. Уточните написание (город, улица, номер дома) или выберите дом из подсказок.'
+          : 'Сервис геокодирования временно недоступен. Попробуйте ещё раз через минуту.';
+        statusEl.className = 'geo-status err';
+      });
+    });
+  }
+
   function wireCategoryEvents(main, cat) {
     var addrInput = document.getElementById('geoAddress');
+    // A3: запоминаем адрес по мере ввода. Раньше он сохранялся только по кнопке «Определить координаты»,
+    // и любая перерисовка (ответ на критерий) стирала поле, т.к. value брался из пустого STATE.address.
+    if (addrInput) addrInput.addEventListener('input', function () { STATE.address = addrInput.value; });
+    wireAddressAutocomplete(addrInput); // Часть B: подсказки DaData (если подключён токен)
     var geoGo = document.getElementById('geoGo');
     if (geoGo) {
       geoGo.addEventListener('click', function () {
@@ -358,13 +558,13 @@
         var statusEl = document.getElementById('geoStatusEl');
         statusEl.textContent = 'Определяем координаты…';
         statusEl.className = 'geo-status';
-        CoreEcoOSM.geocodeAddress(address).then(function (geo) {
+        resolveAddress(address).then(function (geo) {
           STATE.geo = geo;
           statusEl.textContent = 'Координаты найдены: ' + geo.label;
           statusEl.className = 'geo-status';
         }).catch(function (err) {
           if (err && err.message === 'not-found') {
-            statusEl.textContent = 'Адрес не найден в OpenStreetMap. Проверьте написание (город, улица, номер дома) или заполните критерии вручную по ЕИСЖС/ГИС.';
+            statusEl.textContent = 'Адрес не найден. Проверьте написание (город, улица, номер дома) или выберите дом из подсказок.';
           } else {
             statusEl.textContent = 'Сервис геокодирования временно недоступен. Попробуйте ещё раз через минуту или заполните критерии вручную по ЕИСЖС/ГИС.';
           }
@@ -377,27 +577,27 @@
       btn.addEventListener('click', function () {
         var code = btn.getAttribute('data-geocheck');
         if (!STATE.geo) { alert('Сначала укажите и определите адрес дома выше.'); return; }
-        var keys = geoKeysFor(code);
         var resultEl = document.getElementById('georesult-' + code);
         resultEl.textContent = 'проверяем…';
-        Promise.all(keys.map(function (k) { return CoreEcoOSM.checkRule(k, STATE.geo.lat, STATE.geo.lon); }))
-          .then(function (results) {
-            var pass = results.every(function (r) { return r.pass; });
-            var details = results.map(function (r) {
-              var distTxt = r.nearest != null ? Math.round(r.nearest) + ' м' : '—';
-              return r.rule.label + ': ' + (r.found ? 'найдено (' + distTxt + ')' : 'не найдено') + ' в радиусе ' + r.radius + ' м';
-            }).join('; ');
-            var a = ans(code);
-            a.geo = { pass: pass, summary: (pass ? '✓ похоже, выполнено — ' : '⚠ похоже, не выполнено — ') + details };
-            a.satisfied = pass;
-            resultEl.innerHTML = '<b>' + (pass ? 'вероятно да' : 'вероятно нет') + '</b> — ' + details;
-            renderCurrent();
-          })
+        runGeoCheck(code)
+          .then(function () { renderCurrent(); })
           .catch(function () {
             resultEl.textContent = 'сервис OSM сейчас недоступен (попробовали основной и резервный сервер) — отметьте критерий вручную по ЕИСЖС/ГИС';
           });
       });
     });
+
+    // A4: применить авто-результат по клику (появляется, когда он расходится с ручным ответом)
+    main.querySelectorAll('[data-apply-geo]').forEach(function (lnk) {
+      lnk.addEventListener('click', function (e) {
+        e.preventDefault();
+        var code = lnk.getAttribute('data-apply-geo');
+        var a = ans(code);
+        if (a.geo && typeof a.geo.pass === 'boolean') { a.satisfied = a.geo.pass; renderCurrent(); }
+      });
+    });
+
+    wireGeoCheckAll();
 
     main.querySelectorAll('[data-ans]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -598,7 +798,8 @@
   var firstRender = true;
   var lastScrolledStep = null; // прокручиваем страницу только при переходе между шагами, а не при каждом клике внутри критерия (см. правку №8)
   function render() {
-    renderStepper();
+    var stepChanged = STATE.step !== lastScrolledStep; // A1: отличаем смену шага от ответа внутри категории
+    renderStepper(stepChanged && !firstRender);
     var main = document.getElementById('assessMain');
     var sideWrap = document.getElementById('assessSideWrap');
     if (sideWrap) sideWrap.style.display = STATE.step === 0 ? 'none' : '';
@@ -608,7 +809,7 @@
     renderSidebar();
     var resetLink = document.getElementById('resetProgress');
     if (resetLink) resetLink.addEventListener('click', function (e) { e.preventDefault(); resetProgress(); });
-    if (!firstRender && STATE.step !== lastScrolledStep) {
+    if (!firstRender && stepChanged) {
       window.scrollTo({ top: document.getElementById('assessBody').offsetTop - 90, behavior: 'smooth' });
     }
     lastScrolledStep = STATE.step;
